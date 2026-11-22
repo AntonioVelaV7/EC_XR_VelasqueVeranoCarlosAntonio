@@ -53,6 +53,20 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     [SerializeField]
     private float[] coughThresholds = new float[] { 0.75f, 0.50f, 0.25f };
 
+    [Header("Smoke Detector Alarm Audio ((Prb)SmokeDetector)")]
+    [Tooltip("Reference to the ceiling SmokeDetectorAlarm component. Auto-detected if empty.")]
+    [SerializeField]
+    private SmokeDetectorAlarm smokeDetectorAlarm;
+
+    [Tooltip("Volume control for the continuous smoke detector alarm (0 = silent, 0.22 = moderate default).")]
+    [Range(0f, 1f)]
+    [SerializeField]
+    private float smokeAlarmVolume = 0.22f;
+
+    [Tooltip("If true, mutes the smoke detector alarm.")]
+    [SerializeField]
+    private bool muteSmokeAlarm = false;
+
     [Header("Dying Eye-Close / Blackout Effect (<= 3% Oxygen)")]
     [Tooltip("Normalized oxygen threshold (0.03 = 3%) below which the player's eyes progressively close to black.")]
     [Range(0.01f, 0.20f)]
@@ -259,6 +273,16 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     private void OnDisable()
     {
         UnbindRetryEvents();
+    }
+
+    private void OnValidate()
+    {
+        smokeAlarmVolume = Mathf.Clamp01(smokeAlarmVolume);
+        if (smokeDetectorAlarm != null)
+        {
+            smokeDetectorAlarm.AlarmVolume = smokeAlarmVolume;
+            smokeDetectorAlarm.MuteAlarm = muteSmokeAlarm;
+        }
     }
 
     private void BindRetryEvents()
@@ -692,6 +716,10 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         {
             coughAudioSource.Stop();
         }
+        if (smokeDetectorAlarm != null)
+        {
+            smokeDetectorAlarm.StopAlarmOnPlayerDeath();
+        }
         UpdateHudVisuals();
         UpdateBlackoutEyesEffect();
 
@@ -752,6 +780,13 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
 
             extinguisher.transform.SetPositionAndRotation(initialExtinguisherPos, initialExtinguisherRot);
             extinguisher.UpdateHudVisuals();
+        }
+
+        EvacuationDebrisItem.ResetAllDebrisItems();
+
+        if (smokeDetectorAlarm != null)
+        {
+            smokeDetectorAlarm.RestartAlarm();
         }
 
         officeFires = Object.FindObjectsByType<ExtinguishableFire>(FindObjectsInactive.Include);
@@ -872,6 +907,11 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         if (coughAudioSource == null && playerCamera != null)
         {
             coughAudioSource = playerCamera.GetComponent<AudioSource>();
+        }
+
+        if (smokeDetectorAlarm == null)
+        {
+            smokeDetectorAlarm = Object.FindAnyObjectByType<SmokeDetectorAlarm>();
         }
 
         if (xrOriginTransform == null)
