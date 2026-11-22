@@ -231,9 +231,9 @@ public class ExtinguishableFire : MonoBehaviour
             return;
         }
 
-        if (IsExtinguisherSource(other))
+        if (IsExtinguisherSource(other, out float powerMultiplier))
         {
-            Extinguish(Time.deltaTime);
+            Extinguish(Time.deltaTime * powerMultiplier);
         }
     }
 
@@ -247,18 +247,30 @@ public class ExtinguishableFire : MonoBehaviour
             return;
         }
 
-        if (IsExtinguisherSource(other.gameObject))
+        if (IsExtinguisherSource(other.gameObject, out float powerMultiplier))
         {
-            Extinguish(Time.deltaTime);
+            Extinguish(Time.deltaTime * powerMultiplier);
         }
     }
 
     /// <summary>
-    /// Validates whether the colliding GameObject originates from the extinguisher or its spray.
+    /// Validates whether the colliding GameObject originates from an active, non-depleted extinguisher spray.
     /// </summary>
-    private bool IsExtinguisherSource(GameObject obj)
+    private bool IsExtinguisherSource(GameObject obj, out float powerMultiplier)
     {
+        powerMultiplier = 1f;
         if (obj == null) return false;
+
+        ExtinguisherController controller = obj.GetComponentInParent<ExtinguisherController>();
+        if (controller != null)
+        {
+            if (controller.IsDepleted || !controller.IsSpraying)
+            {
+                return false;
+            }
+            powerMultiplier = Mathf.Lerp(0.4f, 1f, controller.CurrentSprayForceMultiplier);
+            return true;
+        }
 
         if (obj.CompareTag("Player"))
         {
@@ -267,11 +279,6 @@ public class ExtinguishableFire : MonoBehaviour
 
         string lowerName = obj.name.ToLowerInvariant();
         if (lowerName.Contains("smoke") || lowerName.Contains("nozzle") || lowerName.Contains("extinguisher"))
-        {
-            return true;
-        }
-
-        if (obj.GetComponentInParent<ExtinguisherController>() != null)
         {
             return true;
         }
