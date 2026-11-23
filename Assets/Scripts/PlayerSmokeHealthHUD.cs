@@ -1040,6 +1040,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         }
 
         EvacuationDebrisItem.ResetAllDebrisItems();
+        EmergencyExitDoor.ResetAllDoors();
 
         if (smokeDetectorAlarm != null)
         {
