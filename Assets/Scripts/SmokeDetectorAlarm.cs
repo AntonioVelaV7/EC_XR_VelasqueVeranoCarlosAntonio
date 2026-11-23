@@ -1,9 +1,10 @@
 using UnityEngine;
 
 /// <summary>
-/// Controls the continuous smoke detector alarm sound on (Prb)SmokeDetector while the player
-/// is trapped inside the office. Provides real-time volume reduction controls, automatic
-/// stop when the player dies (Game Over at 0% oxygen), and automatic restart on Retry.
+/// Controls the continuous smoke detector alarm sound and pulsing red emergency beacon light
+/// on (Prb)SmokeDetector while the player is trapped inside the dark smoke-filled office.
+/// Provides real-time volume reduction controls, automatic stop when the player dies
+/// (Game Over at 0% oxygen), and automatic restart on Retry.
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(AudioSource))]
@@ -46,6 +47,39 @@ public class SmokeDetectorAlarm : MonoBehaviour
     [SerializeField]
     private float outsideOfficeVolumeMultiplier = 0.40f;
 
+    [Header("Emergency Red Beacon Light")]
+    [Tooltip("Point Light under the smoke detector that pulses red while the alarm is active.")]
+    [SerializeField]
+    private Light emergencyBeaconLight;
+
+    [Tooltip("If true, pulses the red emergency Point Light in the dark office while the alarm sounds.")]
+    [SerializeField]
+    private bool enableEmergencyLight = true;
+
+    [Tooltip("Red emergency beacon light color.")]
+    [SerializeField]
+    private Color emergencyLightColor = new Color(1.0f, 0.08f, 0.04f, 1.0f);
+
+    [Tooltip("Peak intensity of the red emergency light pulse.")]
+    [Range(0.1f, 5f)]
+    [SerializeField]
+    private float maxBeaconIntensity = 1.85f;
+
+    [Tooltip("Minimum intensity between pulses.")]
+    [Range(0f, 2f)]
+    [SerializeField]
+    private float minBeaconIntensity = 0.35f;
+
+    [Tooltip("Pulse frequency in Hz synchronized with the emergency alarm cadence.")]
+    [Range(0.5f, 6f)]
+    [SerializeField]
+    private float beaconPulseFrequency = 2.2f;
+
+    [Tooltip("Range in meters of the red ceiling emergency light.")]
+    [Range(1f, 20f)]
+    [SerializeField]
+    private float beaconRange = 12.0f;
+
     [Header("Runtime State (Read Only)")]
     [SerializeField]
     private bool isAlarmActive = false;
@@ -74,6 +108,8 @@ public class SmokeDetectorAlarm : MonoBehaviour
             ApplyAudioSettings();
         }
     }
+
+    public Light EmergencyBeaconLight => emergencyBeaconLight;
 
     public bool IsAlarmActive => isAlarmActive && alarmAudioSource != null && alarmAudioSource.isPlaying;
 
@@ -146,6 +182,7 @@ public class SmokeDetectorAlarm : MonoBehaviour
             }
 
             ApplyAudioSettings();
+            UpdateEmergencyBeaconPulse();
         }
     }
 
@@ -171,10 +208,61 @@ public class SmokeDetectorAlarm : MonoBehaviour
             alarmAudioSource.playOnAwake = false;
         }
 
+        if (emergencyBeaconLight == null)
+        {
+            Transform lightTr = transform.Find("EmergencyAlarmLight");
+            if (lightTr != null)
+            {
+                emergencyBeaconLight = lightTr.GetComponent<Light>();
+            }
+            else
+            {
+                emergencyBeaconLight = GetComponentInChildren<Light>(true);
+            }
+        }
+
+        if (emergencyBeaconLight != null)
+        {
+            emergencyBeaconLight.type = LightType.Point;
+            emergencyBeaconLight.color = emergencyLightColor;
+            emergencyBeaconLight.range = beaconRange;
+            emergencyBeaconLight.shadows = LightShadows.None;
+        }
+
         if (playerHealthHud == null)
         {
             playerHealthHud = Object.FindAnyObjectByType<PlayerSmokeHealthHUD>();
         }
+    }
+
+    private void UpdateEmergencyBeaconPulse()
+    {
+        if (emergencyBeaconLight == null)
+        {
+            return;
+        }
+
+        if (!enableEmergencyLight || muteAlarm || stoppedByPlayerDeath)
+        {
+            if (emergencyBeaconLight.enabled)
+            {
+                emergencyBeaconLight.intensity = 0f;
+                emergencyBeaconLight.enabled = false;
+            }
+            return;
+        }
+
+        if (!emergencyBeaconLight.enabled)
+        {
+            emergencyBeaconLight.enabled = true;
+        }
+
+        emergencyBeaconLight.color = emergencyLightColor;
+        emergencyBeaconLight.range = beaconRange;
+
+        float wave = 0.5f + 0.5f * Mathf.Sin(Time.time * beaconPulseFrequency * Mathf.PI * 2f);
+        float sharpPulse = Mathf.Pow(wave, 1.6f);
+        emergencyBeaconLight.intensity = Mathf.Lerp(minBeaconIntensity, maxBeaconIntensity, sharpPulse);
     }
 
     /// <summary>
@@ -213,10 +301,21 @@ public class SmokeDetectorAlarm : MonoBehaviour
         }
 
         alarmAudioSource.volume = Mathf.Clamp01(effectiveVolume);
+
+        if (emergencyBeaconLight != null)
+        {
+            emergencyBeaconLight.color = emergencyLightColor;
+            emergencyBeaconLight.range = beaconRange;
+            if (!enableEmergencyLight || muteAlarm || stoppedByPlayerDeath)
+            {
+                emergencyBeaconLight.intensity = 0f;
+                emergencyBeaconLight.enabled = false;
+            }
+        }
     }
 
     /// <summary>
-    /// Starts or resumes the continuous smoke alarm sound.
+    /// Starts or resumes the continuous smoke alarm sound and red emergency beacon light.
     /// </summary>
     public void StartAlarm()
     {
@@ -224,6 +323,12 @@ public class SmokeDetectorAlarm : MonoBehaviour
         stoppedByPlayerDeath = false;
         isAlarmActive = true;
         ApplyAudioSettings();
+
+        if (emergencyBeaconLight != null && enableEmergencyLight && !muteAlarm)
+        {
+            emergencyBeaconLight.enabled = true;
+            UpdateEmergencyBeaconPulse();
+        }
 
         if (alarmAudioSource != null && alarmAudioSource.clip != null && !alarmAudioSource.isPlaying)
         {
@@ -233,7 +338,7 @@ public class SmokeDetectorAlarm : MonoBehaviour
     }
 
     /// <summary>
-    /// Immediately stops the smoke alarm when the player dies (0% oxygen Game Over).
+    /// Immediately stops the smoke alarm and turns off the emergency beacon when the player dies (0% oxygen Game Over).
     /// </summary>
     public void StopAlarmOnPlayerDeath()
     {
@@ -248,10 +353,16 @@ public class SmokeDetectorAlarm : MonoBehaviour
             }
             alarmAudioSource.volume = 0f;
         }
+
+        if (emergencyBeaconLight != null)
+        {
+            emergencyBeaconLight.intensity = 0f;
+            emergencyBeaconLight.enabled = false;
+        }
     }
 
     /// <summary>
-    /// Restarts the smoke alarm when the player clicks Retry after Game Over.
+    /// Restarts the smoke alarm and emergency beacon when the player clicks Retry after Game Over.
     /// </summary>
     public void RestartAlarm()
     {
