@@ -67,10 +67,26 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     [SerializeField]
     private bool muteSmokeAlarm = false;
 
-    [Header("Indoor Fire Blackout & Dense Smoke Fog")]
-    [Tooltip("Main Directional Light dimmed while the player is inside the dark smoke-filled office.")]
+    [Header("Indoor Fire Blackout & Outdoor Daylight Separation")]
+    [Tooltip("Main Directional Light (Rendering Layer 1) dimmed while the player is inside the dark smoke-filled office.")]
     [SerializeField]
     private Light directionalLight;
+
+    [Tooltip("Dedicated Directional Sun Light (Rendering Layer 2) that keeps the exterior city in bright daytime permanently.")]
+    [SerializeField]
+    private Light outdoorDaylightSun;
+
+    [Tooltip("Dedicated Sky Fill Directional Light (Rendering Layer 2) that illuminates shaded exterior building facades in daytime.")]
+    [SerializeField]
+    private Light outdoorDaylightSkyFill;
+
+    [Tooltip("Root transform of the exterior city environment (Entorno_Ciudad_Exterior) isolated on Rendering Layer 2.")]
+    [SerializeField]
+    private Transform exteriorCityRoot;
+
+    [Tooltip("Root transform of the indoor office environment (Entorno_Oficina) isolated on Rendering Layer 1.")]
+    [SerializeField]
+    private Transform indoorOfficeRoot;
 
     [Tooltip("Dim charcoal ambient color inside the power-outage office (dark enough for emergency atmosphere, bright enough to navigate).")]
     [SerializeField]
@@ -81,29 +97,25 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     [SerializeField]
     private float indoorReflectionIntensity = 0.25f;
 
-    [Tooltip("Directional sun light intensity while inside the dark office.")]
+    [Tooltip("Directional light intensity on Layer 1 (Office Interior) while inside the dark office.")]
     [Range(0f, 1f)]
     [SerializeField]
     private float indoorDirectionalLightIntensity = 0.24f;
 
-    [Tooltip("Directional sun light intensity when the player evacuates outside to the street.")]
+    [Tooltip("Directional light intensity on Layer 1 (for player hands/props) when the player evacuates outside to the street.")]
     [Range(0.1f, 2f)]
     [SerializeField]
-    private float outdoorDirectionalLightIntensity = 1.0f;
+    private float outdoorDirectionalLightIntensity = 1.25f;
 
-    [Tooltip("Charcoal smoke fog color inside the burning office.")]
+    [Tooltip("Permanent daytime sun intensity on Layer 2 (Entorno_Ciudad_Exterior).")]
+    [Range(0.5f, 3f)]
     [SerializeField]
-    private Color indoorSmokeFogColor = new Color(0.11f, 0.11f, 0.13f, 1.0f);
+    private float exteriorSunIntensity = 1.45f;
 
-    [Tooltip("Maximum exponential-squared fog density inside the office at 100% fire intensity.")]
-    [Range(0.01f, 0.35f)]
+    [Tooltip("Permanent daytime sky fill intensity on Layer 2 (Entorno_Ciudad_Exterior shaded facades).")]
+    [Range(0.2f, 2f)]
     [SerializeField]
-    private float maxIndoorSmokeFogDensity = 0.068f;
-
-    [Tooltip("Residual indoor fog density after all office fires have been extinguished.")]
-    [Range(0f, 0.15f)]
-    [SerializeField]
-    private float minIndoorClearedFogDensity = 0.015f;
+    private float exteriorSkyFillIntensity = 0.95f;
 
     [Header("Progressive Smoke Thinning & Residual Particles")]
     [Tooltip("Fraction of initial smoke emission rate that remains as scattered residual smoke after fires are extinguished (0.14 = 14%).")]
@@ -200,6 +212,45 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     [SerializeField]
     private float viewportY = 0.94f;
 
+    [Header("Top-Right Evacuation Stopwatch / Cronómetro (World Space)")]
+    [Tooltip("World Space Canvas attached to Main Camera for the top-right digital evacuation stopwatch.")]
+    [SerializeField]
+    private Canvas timerHudCanvas;
+
+    [Tooltip("Normalized viewport X for the top-right stopwatch (0.975 = right edge).")]
+    [Range(0.5f, 0.995f)]
+    [SerializeField]
+    private float timerViewportX = 0.975f;
+
+    [Tooltip("Normalized viewport Y for the top-right stopwatch (0.96 = top edge).")]
+    [Range(0.5f, 0.995f)]
+    [SerializeField]
+    private float timerViewportY = 0.96f;
+
+    [Tooltip("Glowing digital amber-orange color for active 7-segment LED digits (matches 01:06.49 display).")]
+    [SerializeField]
+    private Color timerActiveSegmentColor = new Color(1.0f, 0.56f, 0.02f, 1.0f);
+
+    [Tooltip("Faint ghost color for unlit 7-segment LED segments.")]
+    [SerializeField]
+    private Color timerInactiveSegmentColor = new Color(1.0f, 0.56f, 0.02f, 0.055f);
+
+    [Tooltip("Optional TMP_Text storing the formatted MM:SS.cc stopwatch string.")]
+    [SerializeField]
+    private TMP_Text timerReadoutText;
+
+    [Tooltip("Elapsed evacuation time in seconds since start or last retry.")]
+    [SerializeField]
+    private float elapsedEvacuationTime = 0f;
+
+    [Tooltip("True while the evacuation stopwatch is actively counting up.")]
+    [SerializeField]
+    private bool isEvacuationTimerRunning = true;
+
+    [Tooltip("True once the player has successfully evacuated outside the office, locking the final escape time.")]
+    [SerializeField]
+    private bool hasEvacuatedOutside = false;
+
     [Header("Game Over VR Panel References")]
     [Tooltip("World Space Canvas displayed in front of the player when oxygen reaches 0%.")]
     [SerializeField]
@@ -213,13 +264,30 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     [SerializeField]
     private XRSimpleInteractable retryXrInteractable;
 
-    [Tooltip("Distance in meters in front of the player camera where the Game Over panel appears.")]
+    [Tooltip("Distance in meters in front of the player camera where the Game Over / Victory panel appears.")]
     [SerializeField]
     private float gameOverPanelDistance = 1.10f;
 
     [Tooltip("If true, reloads the Unity scene via SceneManager after resetting XR simulator pose.")]
     [SerializeField]
     private bool reloadSceneOnRetry = false;
+
+    [Header("Victory / Evacuation Goal VR Panel References")]
+    [Tooltip("World Space Canvas displayed in front of the player when reaching the evacuation goal point (¡META!).")]
+    [SerializeField]
+    private Canvas victoryCanvas;
+
+    [Tooltip("UI Button on the Victory panel to retry/restart the experience.")]
+    [SerializeField]
+    private Button victoryRetryButton;
+
+    [Tooltip("XRSimpleInteractable on the Victory retry button for direct VR ray/poke activation.")]
+    [SerializeField]
+    private XRSimpleInteractable victoryRetryXrInteractable;
+
+    [Tooltip("TMP_Text on the Victory panel displaying the final stopwatch evacuation time (MM:SS.cc).")]
+    [SerializeField]
+    private TMP_Text victoryTimeText;
 
     [Header("HUD Colors")]
     [SerializeField]
@@ -240,6 +308,9 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
 
     [SerializeField]
     private bool isGameOver = false;
+
+    [SerializeField]
+    private bool isVictory = false;
 
     [SerializeField]
     private float currentBlackoutAmount = 0f;
@@ -286,13 +357,36 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     private bool smokeStoppedAfterExtinction;
     private bool[] coughThresholdTriggered;
 
+    // 7-Segment LED digit cache: 6 digits (M1, M0, S1, S0, C1, C0) x 7 segments (A..G)
+    private static readonly byte[] SevenSegmentDigitMasks = new byte[10]
+    {
+        0x3F, // 0: A B C D E F
+        0x06, // 1: B C
+        0x5B, // 2: A B D E G
+        0x4F, // 3: A B C D G
+        0x66, // 4: B C F G
+        0x6D, // 5: A C D F G
+        0x7D, // 6: A C D E F G
+        0x07, // 7: A B C
+        0x7F, // 8: A B C D E F G
+        0x6F  // 9: A B C D F G
+    };
+    private Image[][] timerDigitSegments;
+    private Image[] timerPunctuationImages;
+    private int lastDisplayedCentiseconds = -1;
+
     public float MaxOxygen => maxOxygen;
     public float CurrentOxygen => currentOxygen;
     public float OxygenNormalized => maxOxygen > 0f ? Mathf.Clamp01(currentOxygen / maxOxygen) : 0f;
     public bool IsPlayerInSmokeZone => isPlayerInSmokeZone;
     public float CurrentSmokeIntensity => currentSmokeIntensity;
     public bool IsGameOver => isGameOver;
+    public bool IsVictory => isVictory;
     public float CurrentBlackoutAmount => currentBlackoutAmount;
+    public float ElapsedEvacuationTime => elapsedEvacuationTime;
+    public bool IsEvacuationTimerRunning => isEvacuationTimerRunning;
+    public bool HasEvacuatedOutside => hasEvacuatedOutside;
+    public string FormattedEvacuationTime => FormatEvacuationTime(elapsedEvacuationTime);
 
     private void Awake()
     {
@@ -302,13 +396,17 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             officeFires = Object.FindObjectsByType<ExtinguishableFire>(FindObjectsInactive.Include);
             currentOxygen = maxOxygen;
             isGameOver = false;
+            isVictory = false;
+            ResetEvacuationTimer();
             ResetCoughThresholds();
             SetGameOverPanelVisible(false);
+            SetVictoryPanelVisible(false);
             CacheSmokeParticleBaselines();
             UpdateIndoorDarknessAndSmokeFog(true);
         }
         UpdateHudPlacement();
         UpdateHudVisuals();
+        UpdateEvacuationTimerVisuals(true);
         UpdateBlackoutEyesEffect();
         UpdateIndoorDarknessAndSmokeFog(false);
     }
@@ -327,6 +425,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         BindRetryEvents();
         UpdateHudPlacement();
         UpdateHudVisuals();
+        UpdateEvacuationTimerVisuals(true);
         UpdateBlackoutEyesEffect();
         UpdateIndoorDarknessAndSmokeFog(false);
     }
@@ -361,6 +460,20 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             retryXrInteractable.activated.RemoveListener(OnRetryXrActivated);
             retryXrInteractable.activated.AddListener(OnRetryXrActivated);
         }
+
+        if (victoryRetryButton != null)
+        {
+            victoryRetryButton.onClick.RemoveListener(RestartGame);
+            victoryRetryButton.onClick.AddListener(RestartGame);
+        }
+
+        if (victoryRetryXrInteractable != null)
+        {
+            victoryRetryXrInteractable.selectEntered.RemoveListener(OnRetryXrSelected);
+            victoryRetryXrInteractable.selectEntered.AddListener(OnRetryXrSelected);
+            victoryRetryXrInteractable.activated.RemoveListener(OnRetryXrActivated);
+            victoryRetryXrInteractable.activated.AddListener(OnRetryXrActivated);
+        }
     }
 
     private void UnbindRetryEvents()
@@ -374,6 +487,17 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         {
             retryXrInteractable.selectEntered.RemoveListener(OnRetryXrSelected);
             retryXrInteractable.activated.RemoveListener(OnRetryXrActivated);
+        }
+
+        if (victoryRetryButton != null)
+        {
+            victoryRetryButton.onClick.RemoveListener(RestartGame);
+        }
+
+        if (victoryRetryXrInteractable != null)
+        {
+            victoryRetryXrInteractable.selectEntered.RemoveListener(OnRetryXrSelected);
+            victoryRetryXrInteractable.activated.RemoveListener(OnRetryXrActivated);
         }
     }
 
@@ -547,6 +671,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         {
             UpdateHudPlacement();
             UpdateHudVisuals();
+            UpdateEvacuationTimerVisuals(false);
             UpdateBlackoutEyesEffect();
             return;
         }
@@ -558,6 +683,13 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             return;
         }
 
+        if (isVictory)
+        {
+            UpdateVictoryPanelFollow();
+            UpdateIndoorDarknessAndSmokeFog(false);
+            return;
+        }
+
         // 1. Evaluate remaining fire intensity (1 = full fire, 0 = all fires extinguished)
         float fireRatio = EvaluateFireIntensity();
 
@@ -566,8 +698,18 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
 
         // 3. Check if player is inside the office smoke volume
         isPlayerInSmokeZone = CheckPlayerInsideOfficeSmoke();
+        if (!isPlayerInSmokeZone && !hasEvacuatedOutside)
+        {
+            hasEvacuatedOutside = true;
+        }
 
-        // 4. Dynamically drain or recover oxygen/life
+        // 4. Advance the evacuation stopwatch until the player reaches the final Goal Point (¡META!)
+        if (isEvacuationTimerRunning)
+        {
+            elapsedEvacuationTime += Time.deltaTime;
+        }
+
+        // 5. Dynamically drain or recover oxygen/life
         if (fireRatio > 0.001f && isPlayerInSmokeZone)
         {
             float dynamicMultiplier = Mathf.Lerp(0.35f, 1.0f, fireRatio);
@@ -576,6 +718,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             {
                 currentOxygen = 0f;
                 UpdateHudVisuals();
+                UpdateEvacuationTimerVisuals(false);
                 TriggerGameOver();
                 return;
             }
@@ -589,6 +732,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         }
 
         UpdateHudVisuals();
+        UpdateEvacuationTimerVisuals(false);
         UpdateBlackoutEyesEffect();
         UpdateIndoorDarknessAndSmokeFog(false);
     }
@@ -597,9 +741,16 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     {
         UpdateHudPlacement();
         UpdateBlackoutEyesEffect();
-        if (Application.isPlaying && isGameOver)
+        if (Application.isPlaying)
         {
-            UpdateGameOverPanelFollow();
+            if (isGameOver)
+            {
+                UpdateGameOverPanelFollow();
+            }
+            else if (isVictory)
+            {
+                UpdateVictoryPanelFollow();
+            }
         }
     }
 
@@ -774,6 +925,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     {
         currentOxygen = 0f;
         isGameOver = true;
+        isEvacuationTimerRunning = false;
         if (coughAudioSource != null && coughAudioSource.isPlaying)
         {
             coughAudioSource.Stop();
@@ -783,6 +935,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             smokeDetectorAlarm.StopAlarmOnPlayerDeath();
         }
         UpdateHudVisuals();
+        UpdateEvacuationTimerVisuals(true);
         UpdateBlackoutEyesEffect();
 
         if (extinguisher != null)
@@ -796,9 +949,49 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     }
 
     /// <summary>
+    /// Displays the World Space VICTORY VR panel in front of the player when they reach the evacuation
+    /// goal point (¡META!), freezing the stopwatch, showing the final time on the panel, and offering Retry.
+    /// </summary>
+    [ContextMenu("Simulate Victory (Reach Goal Point)")]
+    public void TriggerVictory()
+    {
+        if (isGameOver || isVictory)
+        {
+            return;
+        }
+
+        isVictory = true;
+        hasEvacuatedOutside = true;
+        isEvacuationTimerRunning = false;
+
+        if (coughAudioSource != null && coughAudioSource.isPlaying)
+        {
+            coughAudioSource.Stop();
+        }
+
+        if (extinguisher != null)
+        {
+            extinguisher.StopSpraying();
+        }
+
+        UpdateHudVisuals();
+        UpdateEvacuationTimerVisuals(true);
+        UpdateBlackoutEyesEffect();
+
+        if (victoryTimeText != null)
+        {
+            victoryTimeText.text = string.Format("TIEMPO DE EVACUACIÓN: {0}", FormattedEvacuationTime);
+        }
+
+        SetVictoryPanelVisible(true);
+        PositionVictoryPanelInFrontOfCamera(true);
+        Debug.Log(string.Format("[PlayerSmokeHealthHUD] ¡META ALCANZADA! Evacuación completada en {0}.", FormattedEvacuationTime));
+    }
+
+    /// <summary>
     /// Restarts the entire scenario: opens the player's eyes, resets XRDeviceSimulator and teleports
     /// player back to initial spawn, refills and returns the extinguisher, resets all fires and office
-    /// smoke, restores oxygen to 100%, and hides the Game Over panel.
+    /// smoke, restores oxygen to 100%, resets stopwatch to 00:00.00, and hides Game Over / Victory panels.
     /// </summary>
     [ContextMenu("Restart Game (Retry)")]
     public void RestartGame()
@@ -816,7 +1009,9 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         }
 
         isGameOver = false;
+        isVictory = false;
         SetGameOverPanelVisible(false);
+        SetVictoryPanelVisible(false);
 
         if (extinguisher != null)
         {
@@ -899,13 +1094,15 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
 
         currentOxygen = maxOxygen;
         isPlayerInSmokeZone = true;
+        ResetEvacuationTimer();
         ResetCoughThresholds();
         UpdateIndoorDarknessAndSmokeFog(true);
         UpdateHudPlacement();
         UpdateHudVisuals();
+        UpdateEvacuationTimerVisuals(true);
         UpdateBlackoutEyesEffect();
 
-        Debug.Log("[PlayerSmokeHealthHUD] ¡Juego reiniciado por completo! Vista restaurada y jugador de vuelta en el spawn inicial.");
+        Debug.Log("[PlayerSmokeHealthHUD] ¡Juego reiniciado por completo! Cronómetro en 00:00.00, vista restaurada y jugador de vuelta en el spawn inicial.");
     }
 
     private void SetGameOverPanelVisible(bool visible)
@@ -971,6 +1168,69 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         }
     }
 
+    private void SetVictoryPanelVisible(bool visible)
+    {
+        if (victoryCanvas == null)
+        {
+            return;
+        }
+
+        victoryCanvas.enabled = visible;
+        if (victoryRetryXrInteractable != null)
+        {
+            Collider col = victoryRetryXrInteractable.GetComponent<Collider>();
+            if (col != null) col.enabled = visible;
+        }
+    }
+
+    private void PositionVictoryPanelInFrontOfCamera(bool immediate)
+    {
+        if (victoryCanvas == null || playerCamera == null)
+        {
+            return;
+        }
+
+        Vector3 camPos = playerCamera.transform.position;
+        Vector3 forward = playerCamera.transform.forward;
+        Vector3 flatForward = new Vector3(forward.x, 0f, forward.z);
+        if (flatForward.sqrMagnitude < 0.001f)
+        {
+            flatForward = forward;
+        }
+        flatForward.Normalize();
+
+        Vector3 targetPos = camPos + flatForward * gameOverPanelDistance;
+        targetPos.y = camPos.y - 0.04f;
+        Quaternion targetRot = Quaternion.LookRotation(flatForward, Vector3.up);
+
+        if (immediate)
+        {
+            victoryCanvas.transform.SetPositionAndRotation(targetPos, targetRot);
+        }
+        else
+        {
+            victoryCanvas.transform.position = Vector3.Lerp(victoryCanvas.transform.position, targetPos, Time.deltaTime * 4f);
+            victoryCanvas.transform.rotation = Quaternion.Slerp(victoryCanvas.transform.rotation, targetRot, Time.deltaTime * 4f);
+        }
+    }
+
+    private void UpdateVictoryPanelFollow()
+    {
+        if (victoryCanvas == null || !victoryCanvas.enabled || playerCamera == null)
+        {
+            return;
+        }
+
+        Vector3 toPanel = victoryCanvas.transform.position - playerCamera.transform.position;
+        float dist = toPanel.magnitude;
+        float angle = Vector3.Angle(playerCamera.transform.forward, toPanel);
+
+        if (angle > 38f || Mathf.Abs(dist - gameOverPanelDistance) > 0.35f)
+        {
+            PositionVictoryPanelInFrontOfCamera(false);
+        }
+    }
+
     private void EnsureReferences()
     {
         if (playerCamera == null)
@@ -994,6 +1254,42 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             if (dirLightObj != null)
             {
                 directionalLight = dirLightObj.GetComponent<Light>();
+            }
+        }
+
+        if (outdoorDaylightSun == null)
+        {
+            GameObject sunObj = GameObject.Find("Outdoor_Daylight_Sun");
+            if (sunObj != null)
+            {
+                outdoorDaylightSun = sunObj.GetComponent<Light>();
+            }
+        }
+
+        if (outdoorDaylightSkyFill == null)
+        {
+            GameObject fillObj = GameObject.Find("Outdoor_Daylight_SkyFill");
+            if (fillObj != null)
+            {
+                outdoorDaylightSkyFill = fillObj.GetComponent<Light>();
+            }
+        }
+
+        if (exteriorCityRoot == null)
+        {
+            GameObject cityObj = GameObject.Find("Entorno_Ciudad_Exterior");
+            if (cityObj != null)
+            {
+                exteriorCityRoot = cityObj.transform;
+            }
+        }
+
+        if (indoorOfficeRoot == null)
+        {
+            GameObject officeObj = GameObject.Find("Entorno_Oficina");
+            if (officeObj != null)
+            {
+                indoorOfficeRoot = officeObj.transform;
             }
         }
 
@@ -1054,6 +1350,24 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             }
         }
 
+        if (timerHudCanvas == null && playerCamera != null)
+        {
+            Transform tCanvasTr = playerCamera.transform.Find("PlayerTimerHUDCanvas");
+            if (tCanvasTr != null)
+            {
+                timerHudCanvas = tCanvasTr.GetComponent<Canvas>();
+            }
+        }
+
+        if (timerHudCanvas != null)
+        {
+            if (timerReadoutText == null)
+            {
+                timerReadoutText = timerHudCanvas.GetComponentInChildren<TMP_Text>(true);
+            }
+            CacheSevenSegmentReferences();
+        }
+
         if (blackoutCanvas == null && playerCamera != null)
         {
             Transform blkTr = playerCamera.transform.Find("BlackoutEyesCanvas");
@@ -1100,6 +1414,35 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             if (retryXrInteractable == null)
             {
                 retryXrInteractable = gameOverCanvas.GetComponentInChildren<XRSimpleInteractable>(true);
+            }
+        }
+
+        if (victoryCanvas == null)
+        {
+            GameObject vicCanvasObj = GameObject.Find("VictoryVRCanvas");
+            if (vicCanvasObj != null)
+            {
+                victoryCanvas = vicCanvasObj.GetComponent<Canvas>();
+            }
+        }
+
+        if (victoryCanvas != null)
+        {
+            if (victoryRetryButton == null)
+            {
+                victoryRetryButton = victoryCanvas.GetComponentInChildren<Button>(true);
+            }
+            if (victoryRetryXrInteractable == null)
+            {
+                victoryRetryXrInteractable = victoryCanvas.GetComponentInChildren<XRSimpleInteractable>(true);
+            }
+            if (victoryTimeText == null)
+            {
+                Transform timeTr = victoryCanvas.transform.Find("VictoryBorder/VictoryPanel/VictoryTimeBadge/VictoryTimeText");
+                if (timeTr != null)
+                {
+                    victoryTimeText = timeTr.GetComponent<TMP_Text>();
+                }
             }
         }
     }
@@ -1330,12 +1673,32 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     }
 
     /// <summary>
-    /// Dynamically plunges the office into fire-outage darkness and dense charcoal smoke fog
-    /// while the player is inside, and smoothly restores outdoor daylight if the player evacuates outside.
+    /// Isolates the office interior on URP Rendering Layer 1 (dimmed emergency lighting + 3D smoke particles)
+    /// and the exterior city on URP Rendering Layer 2 (permanent bright daytime sun and sky fill without global dark fog).
     /// </summary>
     public void UpdateIndoorDarknessAndSmokeFog(bool immediate)
     {
         float lerpFactor = immediate ? 1f : Mathf.Clamp01(Time.deltaTime * 3.5f);
+
+        // Keep global distance fog disabled so distant outdoor city buildings and streets are never blackened.
+        // Indoor smoke is rendered volumetrically inside OfficeSmokeZone by the 3D particle emitters.
+        if (RenderSettings.fog)
+        {
+            RenderSettings.fog = false;
+        }
+
+        // Permanent bright daytime lighting on Rendering Layer 2 (Entorno_Ciudad_Exterior)
+        if (outdoorDaylightSun != null)
+        {
+            if (!outdoorDaylightSun.enabled) outdoorDaylightSun.enabled = true;
+            outdoorDaylightSun.intensity = exteriorSunIntensity;
+        }
+
+        if (outdoorDaylightSkyFill != null)
+        {
+            if (!outdoorDaylightSkyFill.enabled) outdoorDaylightSkyFill.enabled = true;
+            outdoorDaylightSkyFill.intensity = exteriorSkyFillIntensity;
+        }
 
         if (isPlayerInSmokeZone)
         {
@@ -1353,16 +1716,6 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
                     ? indoorDirectionalLightIntensity
                     : Mathf.Lerp(directionalLight.intensity, indoorDirectionalLightIntensity, lerpFactor);
             }
-
-            float targetFogDensity = Mathf.Lerp(minIndoorClearedFogDensity, maxIndoorSmokeFogDensity, currentSmokeIntensity);
-            RenderSettings.fog = true;
-            RenderSettings.fogMode = FogMode.ExponentialSquared;
-            RenderSettings.fogColor = immediate
-                ? indoorSmokeFogColor
-                : Color.Lerp(RenderSettings.fogColor, indoorSmokeFogColor, lerpFactor);
-            RenderSettings.fogDensity = immediate
-                ? targetFogDensity
-                : Mathf.Lerp(RenderSettings.fogDensity, targetFogDensity, lerpFactor);
         }
         else
         {
@@ -1380,35 +1733,191 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
                     ? outdoorDirectionalLightIntensity
                     : Mathf.Lerp(directionalLight.intensity, outdoorDirectionalLightIntensity, lerpFactor);
             }
+        }
+    }
 
-            float nextFog = immediate ? 0f : Mathf.Lerp(RenderSettings.fogDensity, 0f, lerpFactor);
-            RenderSettings.fogDensity = nextFog;
-            if (nextFog <= 0.003f)
+    /// <summary>
+    /// Pins the World Space Canvases (top-left Life/Oxygen bar and top-right Evacuation Stopwatch)
+    /// to the player's camera view.
+    /// </summary>
+    public void UpdateHudPlacement()
+    {
+        if (playerCamera == null)
+        {
+            return;
+        }
+
+        if (hudCanvas != null)
+        {
+            RectTransform rt = hudCanvas.GetComponent<RectTransform>();
+            if (rt != null)
             {
-                RenderSettings.fog = false;
+                rt.pivot = new Vector2(0f, 1f);
+            }
+
+            Vector3 targetWorldPos = playerCamera.ViewportToWorldPoint(new Vector3(viewportX, viewportY, hudDistance));
+            hudCanvas.transform.position = targetWorldPos;
+            hudCanvas.transform.rotation = playerCamera.transform.rotation;
+        }
+
+        if (timerHudCanvas != null)
+        {
+            RectTransform trt = timerHudCanvas.GetComponent<RectTransform>();
+            if (trt != null)
+            {
+                trt.pivot = new Vector2(1f, 1f);
+            }
+
+            Vector3 timerWorldPos = playerCamera.ViewportToWorldPoint(new Vector3(timerViewportX, timerViewportY, hudDistance));
+            timerHudCanvas.transform.position = timerWorldPos;
+            timerHudCanvas.transform.rotation = playerCamera.transform.rotation;
+        }
+    }
+
+    /// <summary>
+    /// Resets the evacuation stopwatch to 00:00.00 and starts counting immediately.
+    /// </summary>
+    [ContextMenu("Reset Evacuation Stopwatch (00:00.00)")]
+    public void ResetEvacuationTimer()
+    {
+        elapsedEvacuationTime = 0f;
+        hasEvacuatedOutside = false;
+        isEvacuationTimerRunning = true;
+        lastDisplayedCentiseconds = -1;
+        UpdateEvacuationTimerVisuals(true);
+    }
+
+    /// <summary>
+    /// Formats a duration in seconds as MM:SS.cc (e.g., 01:06.49).
+    /// </summary>
+    public static string FormatEvacuationTime(float timeSeconds)
+    {
+        float clamped = Mathf.Max(0f, timeSeconds);
+        int totalCentiseconds = Mathf.FloorToInt(clamped * 100f);
+        int centiseconds = totalCentiseconds % 100;
+        int totalSeconds = totalCentiseconds / 100;
+        int seconds = totalSeconds % 60;
+        int minutes = Mathf.Min(99, totalSeconds / 60);
+        return string.Format("{0:00}:{1:00}.{2:00}", minutes, seconds, centiseconds);
+    }
+
+    private void CacheSevenSegmentReferences()
+    {
+        if (timerHudCanvas == null)
+        {
+            return;
+        }
+
+        if (timerDigitSegments != null && timerDigitSegments.Length == 6 && timerDigitSegments[0] != null && timerDigitSegments[0][0] != null)
+        {
+            return;
+        }
+
+        Transform innerBg = timerHudCanvas.transform.Find("TimerBorderFrame/TimerInnerBackground");
+        if (innerBg == null)
+        {
+            return;
+        }
+
+        string[] digitNames = new string[6] { "Digit_M1", "Digit_M0", "Digit_S1", "Digit_S0", "Digit_C1", "Digit_C0" };
+        timerDigitSegments = new Image[6][];
+        for (int d = 0; d < 6; d++)
+        {
+            timerDigitSegments[d] = new Image[7];
+            Transform digitTr = innerBg.Find(digitNames[d]);
+            if (digitTr != null)
+            {
+                for (int s = 0; s < 7; s++)
+                {
+                    Transform segTr = digitTr.Find("Seg_" + s);
+                    if (segTr != null)
+                    {
+                        timerDigitSegments[d][s] = segTr.GetComponent<Image>();
+                    }
+                }
+            }
+        }
+
+        string[] punctNames = new string[3] { "Colon_Top", "Colon_Bottom", "Decimal_Dot" };
+        timerPunctuationImages = new Image[3];
+        for (int p = 0; p < 3; p++)
+        {
+            Transform pTr = innerBg.Find(punctNames[p]);
+            if (pTr != null)
+            {
+                timerPunctuationImages[p] = pTr.GetComponent<Image>();
             }
         }
     }
 
     /// <summary>
-    /// Pins the World Space Canvas to the top-left of the player's camera view.
+    /// Updates the 7-segment digital stopwatch display in the top-right corner (MM:SS.cc).
     /// </summary>
-    public void UpdateHudPlacement()
+    public void UpdateEvacuationTimerVisuals(bool forceRefresh)
     {
-        if (hudCanvas == null || playerCamera == null)
+        if (timerHudCanvas == null)
         {
             return;
         }
 
-        RectTransform rt = hudCanvas.GetComponent<RectTransform>();
-        if (rt != null)
+        CacheSevenSegmentReferences();
+
+        float clamped = Mathf.Max(0f, elapsedEvacuationTime);
+        int totalCentiseconds = Mathf.FloorToInt(clamped * 100f);
+        if (!forceRefresh && totalCentiseconds == lastDisplayedCentiseconds)
         {
-            rt.pivot = new Vector2(0f, 1f);
+            return;
+        }
+        lastDisplayedCentiseconds = totalCentiseconds;
+
+        int centiseconds = totalCentiseconds % 100;
+        int totalSeconds = totalCentiseconds / 100;
+        int seconds = totalSeconds % 60;
+        int minutes = Mathf.Min(99, totalSeconds / 60);
+
+        int[] digits = new int[6]
+        {
+            minutes / 10,
+            minutes % 10,
+            seconds / 10,
+            seconds % 10,
+            centiseconds / 10,
+            centiseconds % 10
+        };
+
+        if (timerDigitSegments != null)
+        {
+            for (int d = 0; d < 6; d++)
+            {
+                Image[] segs = timerDigitSegments[d];
+                if (segs == null) continue;
+                byte mask = SevenSegmentDigitMasks[Mathf.Clamp(digits[d], 0, 9)];
+                for (int s = 0; s < 7; s++)
+                {
+                    if (segs[s] != null)
+                    {
+                        bool isLit = (mask & (1 << s)) != 0;
+                        segs[s].color = isLit ? timerActiveSegmentColor : timerInactiveSegmentColor;
+                    }
+                }
+            }
         }
 
-        Vector3 targetWorldPos = playerCamera.ViewportToWorldPoint(new Vector3(viewportX, viewportY, hudDistance));
-        hudCanvas.transform.position = targetWorldPos;
-        hudCanvas.transform.rotation = playerCamera.transform.rotation;
+        if (timerPunctuationImages != null)
+        {
+            for (int p = 0; p < timerPunctuationImages.Length; p++)
+            {
+                if (timerPunctuationImages[p] != null)
+                {
+                    timerPunctuationImages[p].color = timerActiveSegmentColor;
+                }
+            }
+        }
+
+        if (timerReadoutText != null)
+        {
+            timerReadoutText.text = string.Format("{0:00}:{1:00}.{2:00}", minutes, seconds, centiseconds);
+        }
     }
 
     /// <summary>
