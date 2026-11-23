@@ -67,6 +67,60 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     [SerializeField]
     private bool muteSmokeAlarm = false;
 
+    [Header("Indoor Fire Blackout & Dense Smoke Fog")]
+    [Tooltip("Main Directional Light dimmed while the player is inside the dark smoke-filled office.")]
+    [SerializeField]
+    private Light directionalLight;
+
+    [Tooltip("Dim charcoal ambient color inside the power-outage office (dark enough for emergency atmosphere, bright enough to navigate).")]
+    [SerializeField]
+    private Color indoorDarkAmbientColor = new Color(0.20f, 0.19f, 0.22f, 1.0f);
+
+    [Tooltip("Low skybox reflection intensity inside the dark office.")]
+    [Range(0f, 1f)]
+    [SerializeField]
+    private float indoorReflectionIntensity = 0.25f;
+
+    [Tooltip("Directional sun light intensity while inside the dark office.")]
+    [Range(0f, 1f)]
+    [SerializeField]
+    private float indoorDirectionalLightIntensity = 0.24f;
+
+    [Tooltip("Directional sun light intensity when the player evacuates outside to the street.")]
+    [Range(0.1f, 2f)]
+    [SerializeField]
+    private float outdoorDirectionalLightIntensity = 1.0f;
+
+    [Tooltip("Charcoal smoke fog color inside the burning office.")]
+    [SerializeField]
+    private Color indoorSmokeFogColor = new Color(0.11f, 0.11f, 0.13f, 1.0f);
+
+    [Tooltip("Maximum exponential-squared fog density inside the office at 100% fire intensity.")]
+    [Range(0.01f, 0.35f)]
+    [SerializeField]
+    private float maxIndoorSmokeFogDensity = 0.068f;
+
+    [Tooltip("Residual indoor fog density after all office fires have been extinguished.")]
+    [Range(0f, 0.15f)]
+    [SerializeField]
+    private float minIndoorClearedFogDensity = 0.015f;
+
+    [Header("Progressive Smoke Thinning & Residual Particles")]
+    [Tooltip("Fraction of initial smoke emission rate that remains as scattered residual smoke after fires are extinguished (0.14 = 14%).")]
+    [Range(0.05f, 0.40f)]
+    [SerializeField]
+    private float residualSmokeEmissionRatio = 0.14f;
+
+    [Tooltip("Fraction of initial smoke particle opacity (alpha) that remains on scattered residual smoke after fires are extinguished.")]
+    [Range(0.20f, 0.80f)]
+    [SerializeField]
+    private float residualSmokeOpacityRatio = 0.42f;
+
+    [Tooltip("Speed at which smoke intensity progressively decreases as fires are sprayed and extinguished.")]
+    [Range(0.15f, 2.0f)]
+    [SerializeField]
+    private float smokeThinningSpeed = 0.65f;
+
     [Header("Dying Eye-Close / Blackout Effect (<= 3% Oxygen)")]
     [Tooltip("Normalized oxygen threshold (0.03 = 3%) below which the player's eyes progressively close to black.")]
     [Range(0.01f, 0.20f)]
@@ -224,6 +278,10 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
     private Vector3 initialRightCtrlEuler;
 
     private readonly Dictionary<ParticleSystem, float> initialSmokeRates = new Dictionary<ParticleSystem, float>();
+    private readonly Dictionary<ParticleSystem, float> initialSmokeSizes = new Dictionary<ParticleSystem, float>();
+    private readonly Dictionary<ParticleSystem, ParticleSystem.MinMaxGradient> initialSmokeColors = new Dictionary<ParticleSystem, ParticleSystem.MinMaxGradient>();
+    private readonly Dictionary<ParticleSystem, float> smoothedEmitterRatios = new Dictionary<ParticleSystem, float>();
+    private ParticleSystem.Particle[] liveParticleBuffer = new ParticleSystem.Particle[600];
     private ParticleSystem[] smokeParticleSystems;
     private bool smokeStoppedAfterExtinction;
     private bool[] coughThresholdTriggered;
@@ -247,10 +305,12 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             ResetCoughThresholds();
             SetGameOverPanelVisible(false);
             CacheSmokeParticleBaselines();
+            UpdateIndoorDarknessAndSmokeFog(true);
         }
         UpdateHudPlacement();
         UpdateHudVisuals();
         UpdateBlackoutEyesEffect();
+        UpdateIndoorDarknessAndSmokeFog(false);
     }
 
     private void Start()
@@ -268,6 +328,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         UpdateHudPlacement();
         UpdateHudVisuals();
         UpdateBlackoutEyesEffect();
+        UpdateIndoorDarknessAndSmokeFog(false);
     }
 
     private void OnDisable()
@@ -529,6 +590,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
 
         UpdateHudVisuals();
         UpdateBlackoutEyesEffect();
+        UpdateIndoorDarknessAndSmokeFog(false);
     }
 
     private void LateUpdate()
@@ -813,10 +875,21 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             foreach (var ps in smokeParticleSystems)
             {
                 if (ps == null) continue;
+                smoothedEmitterRatios[ps] = 1.0f;
                 if (initialSmokeRates.TryGetValue(ps, out float baseRate))
                 {
                     var emission = ps.emission;
                     emission.rateOverTimeMultiplier = baseRate;
+                }
+                if (initialSmokeSizes.TryGetValue(ps, out float baseSize))
+                {
+                    var main = ps.main;
+                    main.startSizeMultiplier = baseSize;
+                }
+                if (initialSmokeColors.TryGetValue(ps, out ParticleSystem.MinMaxGradient baseCol))
+                {
+                    var main = ps.main;
+                    main.startColor = baseCol;
                 }
                 ps.Clear(true);
                 ps.Simulate(2.0f, true, true);
@@ -827,6 +900,7 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         currentOxygen = maxOxygen;
         isPlayerInSmokeZone = true;
         ResetCoughThresholds();
+        UpdateIndoorDarknessAndSmokeFog(true);
         UpdateHudPlacement();
         UpdateHudVisuals();
         UpdateBlackoutEyesEffect();
@@ -912,6 +986,15 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         if (smokeDetectorAlarm == null)
         {
             smokeDetectorAlarm = Object.FindAnyObjectByType<SmokeDetectorAlarm>();
+        }
+
+        if (directionalLight == null)
+        {
+            GameObject dirLightObj = GameObject.Find("Directional Light");
+            if (dirLightObj != null)
+            {
+                directionalLight = dirLightObj.GetComponent<Light>();
+            }
         }
 
         if (xrOriginTransform == null)
@@ -1031,9 +1114,23 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         smokeParticleSystems = officeSmokeRoot.GetComponentsInChildren<ParticleSystem>(true);
         foreach (var ps in smokeParticleSystems)
         {
-            if (ps != null && !initialSmokeRates.ContainsKey(ps))
+            if (ps == null) continue;
+
+            if (!initialSmokeRates.ContainsKey(ps))
             {
                 initialSmokeRates[ps] = ps.emission.rateOverTimeMultiplier;
+            }
+            if (!initialSmokeSizes.ContainsKey(ps))
+            {
+                initialSmokeSizes[ps] = ps.main.startSizeMultiplier;
+            }
+            if (!initialSmokeColors.ContainsKey(ps))
+            {
+                initialSmokeColors[ps] = ps.main.startColor;
+            }
+            if (!smoothedEmitterRatios.ContainsKey(ps))
+            {
+                smoothedEmitterRatios[ps] = 1.0f;
             }
         }
     }
@@ -1061,14 +1158,48 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             }
         }
 
-        if (!anyActiveFire || totalMax <= 0f)
+        float targetRatio = (!anyActiveFire || totalMax <= 0f) ? 0f : Mathf.Clamp01(totalCurrent / totalMax);
+        if (Application.isPlaying)
         {
-            currentSmokeIntensity = 0f;
-            return 0f;
+            currentSmokeIntensity = Mathf.MoveTowards(currentSmokeIntensity, targetRatio, Time.deltaTime * smokeThinningSpeed);
+        }
+        else
+        {
+            currentSmokeIntensity = targetRatio;
         }
 
-        currentSmokeIntensity = Mathf.Clamp01(totalCurrent / totalMax);
         return currentSmokeIntensity;
+    }
+
+    private float EvaluateLocalFireRatioForEmitter(Vector3 emitterPos, float globalFireRatio)
+    {
+        if (officeFires == null || officeFires.Length == 0)
+        {
+            return globalFireRatio;
+        }
+
+        float weightedCurrent = 0f;
+        float weightedMax = 0f;
+
+        foreach (var fire in officeFires)
+        {
+            if (fire == null) continue;
+            float dist = Vector3.Distance(emitterPos, fire.transform.position);
+            // Fires within 5m of this smoke emitter have strong local influence
+            float weight = 1f / (1f + dist * dist * 0.12f);
+            float maxH = Mathf.Max(1f, fire.MaxHealth);
+            float curH = fire.IsExtinguished ? 0f : Mathf.Max(0f, fire.CurrentHealth);
+            weightedMax += maxH * weight;
+            weightedCurrent += curH * weight;
+        }
+
+        if (weightedMax <= 0.0001f)
+        {
+            return globalFireRatio;
+        }
+
+        float localRatio = Mathf.Clamp01(weightedCurrent / weightedMax);
+        return Mathf.Lerp(globalFireRatio, localRatio, 0.65f);
     }
 
     private void UpdateOfficeSmokeEmission(float fireRatio)
@@ -1083,31 +1214,104 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
             CacheSmokeParticleBaselines();
         }
 
-        if (fireRatio <= 0.001f)
+        if (smokeParticleSystems == null)
         {
-            if (!smokeStoppedAfterExtinction && smokeParticleSystems != null)
+            return;
+        }
+
+        smokeStoppedAfterExtinction = fireRatio <= 0.001f;
+
+        foreach (var ps in smokeParticleSystems)
+        {
+            if (ps == null) continue;
+
+            bool isAshes = ps.name.Contains("Ashes");
+            if (isAshes)
             {
-                foreach (var ps in smokeParticleSystems)
+                if (fireRatio <= 0.001f)
                 {
-                    if (ps != null && ps.isPlaying)
+                    if (ps.isPlaying)
                     {
                         ps.Stop(true, ParticleSystemStopBehavior.StopEmitting);
                     }
                 }
-                smokeStoppedAfterExtinction = true;
-            }
-            return;
-        }
-
-        smokeStoppedAfterExtinction = false;
-        if (smokeParticleSystems != null)
-        {
-            foreach (var ps in smokeParticleSystems)
-            {
-                if (ps != null && initialSmokeRates.TryGetValue(ps, out float baseRate))
+                else if (initialSmokeRates.TryGetValue(ps, out float ashBaseRate))
                 {
-                    var emission = ps.emission;
-                    emission.rateOverTimeMultiplier = baseRate * Mathf.Lerp(0.15f, 1.0f, fireRatio);
+                    var ashEmission = ps.emission;
+                    ashEmission.rateOverTimeMultiplier = ashBaseRate * fireRatio;
+                    if (!ps.isPlaying) ps.Play(true);
+                }
+                continue;
+            }
+
+            // Compute target ratio for this specific smoke emitter (blending local + global fire progress)
+            float targetEmitterRatio = EvaluateLocalFireRatioForEmitter(ps.transform.position, fireRatio);
+            float prevSmoothed = smoothedEmitterRatios.TryGetValue(ps, out float curVal) ? curVal : 1.0f;
+            float smoothedRatio = Mathf.MoveTowards(prevSmoothed, targetEmitterRatio, Time.deltaTime * smokeThinningSpeed);
+            smoothedEmitterRatios[ps] = smoothedRatio;
+
+            // Keep emitter playing so scattered residual smoke particles remain even when fireRatio == 0
+            if (!ps.isPlaying)
+            {
+                ps.Play(true);
+            }
+
+            if (initialSmokeRates.TryGetValue(ps, out float baseRate))
+            {
+                var emission = ps.emission;
+                emission.rateOverTimeMultiplier = baseRate * Mathf.Lerp(residualSmokeEmissionRatio, 1.0f, smoothedRatio);
+            }
+
+            if (initialSmokeSizes.TryGetValue(ps, out float baseSize))
+            {
+                var main = ps.main;
+                main.startSizeMultiplier = baseSize * Mathf.Lerp(0.75f, 1.0f, smoothedRatio);
+            }
+
+            if (initialSmokeColors.TryGetValue(ps, out ParticleSystem.MinMaxGradient baseColorGrad))
+            {
+                var main = ps.main;
+                float alphaMult = Mathf.Lerp(residualSmokeOpacityRatio, 1.0f, smoothedRatio);
+                if (baseColorGrad.mode == ParticleSystemGradientMode.TwoColors)
+                {
+                    Color cMin = baseColorGrad.colorMin;
+                    Color cMax = baseColorGrad.colorMax;
+                    cMin.a *= alphaMult;
+                    cMax.a *= alphaMult;
+                    main.startColor = new ParticleSystem.MinMaxGradient(cMin, cMax);
+                }
+                else if (baseColorGrad.mode == ParticleSystemGradientMode.Color)
+                {
+                    Color c = baseColorGrad.color;
+                    c.a *= alphaMult;
+                    main.startColor = new ParticleSystem.MinMaxGradient(c);
+                }
+            }
+
+            // Gently attenuate already-living particles when smoke intensity drops so the player sees immediate thinning
+            if (prevSmoothed - smoothedRatio > 0.0005f)
+            {
+                int maxCount = ps.main.maxParticles;
+                if (liveParticleBuffer == null || liveParticleBuffer.Length < maxCount)
+                {
+                    liveParticleBuffer = new ParticleSystem.Particle[Mathf.Max(600, maxCount)];
+                }
+
+                int numAlive = ps.GetParticles(liveParticleBuffer);
+                if (numAlive > 0)
+                {
+                    float fadeFactor = Mathf.Clamp01(1f - (prevSmoothed - smoothedRatio) * 0.85f);
+                    byte minAllowedAlpha = (byte)Mathf.RoundToInt(Mathf.Lerp(55f, 255f, smoothedRatio));
+                    for (int i = 0; i < numAlive; i++)
+                    {
+                        Color32 c32 = liveParticleBuffer[i].startColor;
+                        if (c32.a > minAllowedAlpha)
+                        {
+                            c32.a = (byte)Mathf.Max(minAllowedAlpha, Mathf.RoundToInt(c32.a * fadeFactor));
+                            liveParticleBuffer[i].startColor = c32;
+                        }
+                    }
+                    ps.SetParticles(liveParticleBuffer, numAlive);
                 }
             }
         }
@@ -1123,6 +1327,67 @@ public class PlayerSmokeHealthHUD : MonoBehaviour
         Vector3 camPos = playerCamera.transform.position;
         Vector3 checkPos = new Vector3(camPos.x, Mathf.Clamp(camPos.y, 0.5f, 2.5f), camPos.z);
         return officeSmokeBounds.bounds.Contains(checkPos);
+    }
+
+    /// <summary>
+    /// Dynamically plunges the office into fire-outage darkness and dense charcoal smoke fog
+    /// while the player is inside, and smoothly restores outdoor daylight if the player evacuates outside.
+    /// </summary>
+    public void UpdateIndoorDarknessAndSmokeFog(bool immediate)
+    {
+        float lerpFactor = immediate ? 1f : Mathf.Clamp01(Time.deltaTime * 3.5f);
+
+        if (isPlayerInSmokeZone)
+        {
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+            RenderSettings.ambientLight = immediate
+                ? indoorDarkAmbientColor
+                : Color.Lerp(RenderSettings.ambientLight, indoorDarkAmbientColor, lerpFactor);
+            RenderSettings.reflectionIntensity = immediate
+                ? indoorReflectionIntensity
+                : Mathf.Lerp(RenderSettings.reflectionIntensity, indoorReflectionIntensity, lerpFactor);
+
+            if (directionalLight != null)
+            {
+                directionalLight.intensity = immediate
+                    ? indoorDirectionalLightIntensity
+                    : Mathf.Lerp(directionalLight.intensity, indoorDirectionalLightIntensity, lerpFactor);
+            }
+
+            float targetFogDensity = Mathf.Lerp(minIndoorClearedFogDensity, maxIndoorSmokeFogDensity, currentSmokeIntensity);
+            RenderSettings.fog = true;
+            RenderSettings.fogMode = FogMode.ExponentialSquared;
+            RenderSettings.fogColor = immediate
+                ? indoorSmokeFogColor
+                : Color.Lerp(RenderSettings.fogColor, indoorSmokeFogColor, lerpFactor);
+            RenderSettings.fogDensity = immediate
+                ? targetFogDensity
+                : Mathf.Lerp(RenderSettings.fogDensity, targetFogDensity, lerpFactor);
+        }
+        else
+        {
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
+            RenderSettings.ambientIntensity = immediate
+                ? 1.0f
+                : Mathf.Lerp(RenderSettings.ambientIntensity, 1.0f, lerpFactor);
+            RenderSettings.reflectionIntensity = immediate
+                ? 1.0f
+                : Mathf.Lerp(RenderSettings.reflectionIntensity, 1.0f, lerpFactor);
+
+            if (directionalLight != null)
+            {
+                directionalLight.intensity = immediate
+                    ? outdoorDirectionalLightIntensity
+                    : Mathf.Lerp(directionalLight.intensity, outdoorDirectionalLightIntensity, lerpFactor);
+            }
+
+            float nextFog = immediate ? 0f : Mathf.Lerp(RenderSettings.fogDensity, 0f, lerpFactor);
+            RenderSettings.fogDensity = nextFog;
+            if (nextFog <= 0.003f)
+            {
+                RenderSettings.fog = false;
+            }
+        }
     }
 
     /// <summary>

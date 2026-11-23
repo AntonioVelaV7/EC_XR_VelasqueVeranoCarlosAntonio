@@ -123,7 +123,7 @@ Material:
     - _NoisesPower: 1.5
     - _Noises_Multiply: 2
     - _Noises_Power: 1.5
-    - _OpacityBoost: 1
+    - _OpacityBoost: 1.28
     - _Opacity_Boost: 1
     - _Opacity_DepthDistance: 1
     - _Opacity_DepthFade: 1

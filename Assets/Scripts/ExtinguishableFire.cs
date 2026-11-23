@@ -38,9 +38,9 @@ public class ExtinguishableFire : MonoBehaviour
     [SerializeField]
     private Collider fireCollider;
 
-    [Tooltip("Target full intensity of the fire light. Defaults to 1.2f.")]
+    [Tooltip("Target full intensity of the fire light. Defaults to 2.6f.")]
     [SerializeField]
-    private float baseLightIntensity = 1.2f;
+    private float baseLightIntensity = 2.6f;
 
     // Initial state cache
     private Vector3 initialScale;
@@ -82,6 +82,19 @@ public class ExtinguishableFire : MonoBehaviour
     private void Awake()
     {
         EnsureInitialized();
+    }
+
+    private void Update()
+    {
+        if (isExtinguished || fireLight == null || maxHealth <= 0f)
+        {
+            return;
+        }
+
+        float healthRatio = Mathf.Clamp01(currentHealth / maxHealth);
+        float noise = Mathf.PerlinNoise(Time.time * 7.5f, transform.position.x * 3.1f + transform.position.z * 5.7f);
+        float flickerMultiplier = Mathf.Lerp(0.82f, 1.18f, noise);
+        fireLight.intensity = baseLightIntensity * healthRatio * flickerMultiplier;
     }
 
     private void EnsureInitialized()
